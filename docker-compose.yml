@@ -1,0 +1,11 @@
+services:
+  biomassa-ia:
+    build: .
+    container_name: biomassa-ia
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./artifacts:/app/artifacts
+    restart: unless-stopped

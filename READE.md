@@ -9,14 +9,14 @@ API de Machine Learning para previsão de crescimento de biomassa em tanques de 
 - [Visão Geral](#visão-geral)
 - [Arquitetura](#arquitetura)
 - [Pré-requisitos](#pré-requisitos)
-- [Instalação](#instalação)
+- [Instalação local](#instalação-local)
 - [Configuração](#configuração)
 - [Executando a API](#executando-a-api)
 - [Endpoints](#endpoints)
 - [Treinamento do Modelo](#treinamento-do-modelo)
 - [Banco de Dados Oracle](#banco-de-dados-oracle)
 - [Testes](#testes)
-- [Deploy na OCI](#deploy-na-oci)
+- [Deploy na OCI com Docker](#deploy-na-oci-com-docker)
 - [Estrutura do Projeto](#estrutura-do-projeto)
 
 ---
@@ -32,6 +32,7 @@ O modelo é um **Random Forest Regressor** (scikit-learn) treinado com históric
 - FastAPI + Uvicorn
 - scikit-learn (Random Forest)
 - Oracle Database (via `python-oracledb`)
+- Docker + Docker Compose
 
 ---
 
@@ -61,28 +62,25 @@ Sensores IoT / API Java
 
 ## Pré-requisitos
 
-- Python 3.11 ou superior
-- Oracle Database acessível (local ou na nuvem)
-- Oracle Instant Client **não é necessário** com `python-oracledb` no modo Thin (padrão)
+**Local:**
+- Python 3.11+
+- Docker e Docker Compose
 
-```bash
-python3 --version
-```
+**OCI:**
+- VM Ubuntu 22.04 (Always Free é suficiente)
+- Docker instalado na VM
+- Porta 8000 liberada no Security List
 
 ---
 
-## Instalação
+## Instalação local
 
 ```bash
-# Clone o repositório
 git clone https://github.com/GS1-2TDSPG-2026/gs1-python-LSTM.git
 cd gs1-python-LSTM
 
-# Crie e ative o ambiente virtual
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Instale as dependências
 pip install -r requirements.txt
 ```
 
@@ -107,16 +105,16 @@ ORACLE_DSN=localhost:1521/XEPDB1
 
 ## Executando a API
 
-### Desenvolvimento
+### Desenvolvimento (sem Docker)
 
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Produção
+### Produção (com Docker)
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
+docker compose up -d
 ```
 
 Acesse a documentação interativa em: **http://localhost:8000/docs**
@@ -180,6 +178,8 @@ python -m training.train
 ```
 
 Gera `artifacts/model.pkl` e `artifacts/scaler.pkl` com 500 amostras sintéticas.
+
+> Com Docker, o treinamento inicial roda automaticamente durante o `docker build`.
 
 ### Com dados reais do Oracle
 
@@ -247,9 +247,7 @@ pytest tests/ -v
 
 ---
 
-## Deploy na OCI
-
-A API consome ~150–300 MB de RAM. Uma VM `VM.Standard.E2.1.Micro` (Always Free) é suficiente para testes.
+## Deploy na OCI com Docker
 
 ### 1. Provisionar a VM
 
@@ -258,77 +256,74 @@ No Console da OCI, crie uma instância:
 - Imagem: **Ubuntu 22.04**
 - Abra a porta `8000` no Security List da subnet
 
-### 2. Configurar a VM
+### 2. Instalar Docker na VM
 
 ```bash
-# Conecte via SSH
 ssh ubuntu@<IP_DA_SUA_VM>
 
-# Instale dependências
 sudo apt update
-sudo apt install python3.11 python3.11-venv python3-pip git -y
+sudo apt install -y ca-certificates curl
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+  https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list
 
-# Clone o projeto
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Permite rodar docker sem sudo
+sudo usermod -aG docker ubuntu
+newgrp docker
+```
+
+### 3. Clonar e configurar o projeto
+
+```bash
 git clone https://github.com/GS1-2TDSPG-2026/gs1-python-LSTM.git
 cd gs1-python-LSTM
 
-# Ambiente virtual e dependências
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-# Configure o .env
 cp .env.example .env
 nano .env
-
-# Treine o modelo inicial
-python -m training.train
 ```
 
-### 3. Rodar como serviço (systemd)
+### 4. Subir a aplicação
 
 ```bash
-sudo nano /etc/systemd/system/biomassa-ia.service
+docker compose up -d --build
 ```
 
-```ini
-[Unit]
-Description=Biomassa IA — Motor Preditivo
-After=network.target
+O `--build` garante que o modelo seja treinado na primeira vez. Nas próximas atualizações, o volume `./artifacts` preserva o `model.pkl` já treinado.
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/gs1-python-LSTM
-EnvironmentFile=/home/ubuntu/gs1-python-LSTM/.env
-ExecStart=/home/ubuntu/gs1-python-LSTM/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
+### 5. Verificar
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable biomassa-ia
-sudo systemctl start biomassa-ia
-
-# Verificar status
-sudo systemctl status biomassa-ia
+# Status do container
+docker compose ps
 
 # Logs em tempo real
-sudo journalctl -u biomassa-ia -f
+docker compose logs -f
+
+# Testar o endpoint
+curl http://localhost:8000/api/v1/health
 ```
 
-### 4. Abrir a porta no firewall da VM
+### 6. Abrir porta no firewall da VM
 
 ```bash
-# Ubuntu
 sudo ufw allow 8000/tcp
 ```
 
 Lembre-se também de liberar a porta `8000` no **Security List** da subnet no Console da OCI.
+
+### Atualizar após mudanças no código
+
+```bash
+git pull
+docker compose up -d --build
+```
+
+O container reinicia automaticamente se a VM for reiniciada (`restart: unless-stopped`).
 
 ---
 
@@ -356,6 +351,8 @@ gs1-python-LSTM/
 │   └── train.py
 ├── .env.example
 ├── .gitignore
+├── docker-compose.yml
+├── Dockerfile
 ├── requirements.txt
 └── README.md
 ```
