@@ -4,7 +4,7 @@ main.py
 Ponto de entrada da aplicação. É o primeiro arquivo que roda quando você inicia a API.
 
 Para rodar: uvicorn app.main:app --reload --port 8000
-Depois acesse: http://localhost:8000/redoc  ← documentação automática gerada pelo FastAPI
+Depois acesse: http://localhost:8000/docs  ← documentação automática gerada pelo FastAPI
 """
 
 from fastapi import FastAPI
@@ -39,4 +39,4 @@ async def ao_iniciar():
 
 @app.get("/", include_in_schema=False)
 def raiz():
-    return {"mensagem": "Biomassa IA está no ar. Acesse /redoc para a documentação."}
+    return {"mensagem": "Biomassa IA está no ar. Acesse /docs para a documentação."}
